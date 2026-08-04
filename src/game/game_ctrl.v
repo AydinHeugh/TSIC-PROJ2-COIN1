@@ -29,6 +29,7 @@ module game_ctrl #(
 	input btn_skill,
 
 	output reg [9:0] player_x,
+	output reg [9:0] player_y,
 	output reg [5:0] player_speed,
 	output reg player_dir,
 
@@ -75,8 +76,12 @@ reg [7:0] spawn_cnt;
 reg btn_start_q;
 reg [7:0] spawn_period;
 
+reg signed [9:0] player_vy;
+
 wire btn_start_rise = btn_start && !btn_start_q;
+reg btn_skill_q;
 wire skill_start;
+wire btn_jump_rise = !btn_skill && btn_skill_q;
 wire skill_btn_active = btn_skill && state == S_PLAY;
 wire can_left = player_x > player_speed;
 wire can_right = player_x + player_speed < PLAYER_MAX_X;
@@ -103,7 +108,7 @@ skill_slot #(
 	.resetn(resetn),
 	.sec_tick(sec_tick),
 	.restart(btn_start_rise),
-	.btn_skill(skill_btn_active),
+	.btn_skill(1'b0), //skill button is closed
 	.skill_charge(skill_charge),
 	.skill_timer(skill_timer),
 	.skill_on(skill_on),
@@ -148,8 +153,8 @@ reg [4:0] hit_idx;
 reg [9:0] hit_obj_x;
 wire [10:0] hit_player_l = player_x;
 wire [10:0] hit_player_r = player_x + `PLAYER_W;
-wire [10:0] hit_player_t = `PLAYER_Y + PLAYER_HIT_TOP_PAD;
-wire [10:0] hit_player_b = `PLAYER_Y + `PLAYER_H;
+wire [10:0] hit_player_t = player_y + PLAYER_HIT_TOP_PAD;
+wire [10:0] hit_player_b = player_y + `PLAYER_H;
 
 function [9:0] obj_x;
 	input [LANE_BITS-1:0] lane;
@@ -264,6 +269,8 @@ integer i;
 always @(posedge clk) begin
 	if (!resetn) begin
 		player_x <= PLAYER_START_X;
+		player_y  <= 10'd352;
+		player_vy <= 0;
 		player_speed <= PLAYER_SPEED_START;
 		player_dir <= 1;
 		spawn_period <= SPAWN_PERIOD_FRAMES;
@@ -285,9 +292,12 @@ always @(posedge clk) begin
 		end
 	end else begin
 		btn_start_q <= btn_start;
-
+		btn_skill_q <= btn_skill;
+		
 		if (btn_start_rise) begin
 			player_x <= PLAYER_START_X;
+			player_y  <= 10'd352;
+			player_vy <= 0;
 			player_speed <= PLAYER_SPEED_START;
 			player_dir <= 1;
 			spawn_period <= SPAWN_PERIOD_FRAMES;
@@ -307,7 +317,23 @@ always @(posedge clk) begin
 			end
 		end else begin
 			if (frame_tick && state == S_PLAY) begin
+				if (btn_skill)
+    			player_y <= 300;
+				// Jump
+				// Start jump
+				if (btn_skill && player_y == 10'd352 && player_vy == 0)
+					player_vy <= -10;
 
+				// Gravity
+				if (player_y < 10'd352 || player_vy != 0) begin
+					player_y <= player_y + player_vy;
+					player_vy <= player_vy + 1;
+
+					if (player_y + player_vy >= 10'd352) begin
+						player_y <= 10'd352;
+						player_vy <= 0;
+					end
+				end
 				// Direction control
 				if (btn_left && !btn_right) begin
 					if (can_left)
