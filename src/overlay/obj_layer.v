@@ -15,6 +15,7 @@ module obj_layer #(
 
 	// object state from game controller
 	input [9:0] player_x,
+	input [9:0] player_y,
 	input       player_dir,
 	input       skill_on,
 
@@ -115,11 +116,11 @@ wire [OBJ_ATLAS_ADDR_WIDTH-1:0] obj_atlas_addr = {obj_type_now, obj_src_y, obj_s
 wire [7:0] obj_rgb;
 
 wire hit_player = pixel_x >= player_x && pixel_x < player_x + `PLAYER_W &&
-				  pixel_y >= `PLAYER_Y && pixel_y < `PLAYER_Y + `PLAYER_H;
+				  pixel_y >= player_y && pixel_y < player_y + `PLAYER_H;
 
 // 32x32 -> 64x64 scaling by replicating pixels
 wire [9:0] player_rel_x = pixel_x - player_x;
-wire [9:0] player_rel_y = pixel_y - `PLAYER_Y;
+wire [9:0] player_rel_y = pixel_y - player_y;
 wire [PLAYER_SRC_BITS-1:0] player_src_x = player_rel_x[5:1];
 wire [PLAYER_SRC_BITS-1:0] player_src_y = player_rel_y[5:1];
 wire [PLAYER_SRC_BITS-1:0] player_addr_x = player_dir ? player_src_x : (5'd31 - player_src_x);
