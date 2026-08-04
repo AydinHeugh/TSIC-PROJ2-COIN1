@@ -48,6 +48,8 @@ wire [0:0] ui_tuser;
 
 wire frame_tick;
 wire [9:0] player_x;
+wire [9:0] player_y;
+wire [5:0] player_speed;
 wire player_dir;
 wire [MAX_OBJ              -1:0] obj_valid_bus;
 wire [MAX_OBJ*LANE_BITS    -1:0] obj_lane_bus;
@@ -86,6 +88,8 @@ game_ctrl #(
 	.btn_skill(btn_skill),
 
 	.player_x(player_x),
+	.player_y(player_y),
+	.player_speed(player_speed),
 	.player_dir(player_dir),
 
 	.obj_valid_bus(obj_valid_bus),
@@ -130,6 +134,7 @@ obj_layer #(
 	.resetn(resetn),
 
 	.player_x(player_x),
+	.player_y(player_y),
 	.player_dir(player_dir),
 	.skill_on(skill_on),
 	.obj_valid_bus(obj_valid_bus),
