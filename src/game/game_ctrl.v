@@ -47,7 +47,10 @@ module game_ctrl #(
 	output reg [2:0] skill_charge,
 	output [7:0] skill_timer,
 	output skill_on,
-	output game_over
+	output game_over,
+
+	output reg [7:0] hp,           // 0..99 HP
+	output [11:0] hp_bcd
 );
 localparam S_PLAY = 1;
 localparam S_OVER = 2;
@@ -59,6 +62,11 @@ localparam TYPE_MINUS3 = 3;
 localparam TYPE_MINUS5 = 4;
 localparam TYPE_TIME = 5;
 localparam TYPE_CHARGE = 6;
+
+localparam [7:0] HP_MAX = 8'd99;
+localparam [7:0] HP_DECAY_PER_SEC = 8'd2;
+localparam [7:0] HP_DMG_MINUS3 = 8'd3;
+localparam [7:0] HP_DMG_MINUS5 = 8'd5;
 
 localparam [9:0] SCREEN_W = 640;
 localparam [9:0] OBJ_GROUND_Y = `UI_TOP - `OBJ_H;
@@ -204,8 +212,8 @@ always @(*) begin
 			TYPE_COIN_1: score_delta = 1;
 			TYPE_COIN_3: score_delta = 3;
 			TYPE_COIN_5: score_delta = 5;
-			TYPE_MINUS3: score_delta = -3;
-			TYPE_MINUS5: score_delta = -5;
+			// TYPE_MINUS3 / TYPE_MINUS5 are hazards now -- they cost HP, not
+			// score. See the hp_delta block below.
 			TYPE_TIME: next_timer = timer + TIME_BONUS;
 			TYPE_CHARGE:
 				if (skill_charge < SKILL_CHARGE_MAX)
@@ -225,6 +233,26 @@ always @(*) begin
 	end
 end
 
+// --- HP system: passive decay + mob-hit damage ---
+wire mob_hit3 = hit_valid && obj_type[hit_idx] == TYPE_MINUS3;
+wire mob_hit5 = hit_valid && obj_type[hit_idx] == TYPE_MINUS5;
+
+reg signed [9:0] hp_delta;
+reg signed [10:0] hp_sum;
+reg [7:0] next_hp;
+always @(*) begin
+	hp_delta = 0;
+	if (sec_tick)
+		hp_delta = hp_delta - HP_DECAY_PER_SEC;   // passive drain, once per second
+	if (mob_hit3)
+		hp_delta = hp_delta - HP_DMG_MINUS3;
+	if (mob_hit5)
+		hp_delta = hp_delta - HP_DMG_MINUS5;
+
+	hp_sum = $signed({1'b0, hp}) + hp_delta;
+	next_hp = (hp_sum < 0) ? 8'd0 : hp_sum[7:0];
+end
+
 wire game_ending = sec_tick && next_timer <= 1;
 wire new_high_score = score_bcd > high_score_bcd;
 
@@ -242,6 +270,13 @@ bin2bcd #(
 ) u_timer_bcd (
 	.bin(timer),
 	.bcd(timer_bcd)
+);
+
+bin2bcd #(
+	.BIN_BITS(8)
+) u_hp_bcd (
+	.bin(hp),
+	.bcd(hp_bcd)
 );
 
 integer pack_i;
@@ -283,6 +318,7 @@ always @(posedge clk) begin
 		frame_cnt <= 0;
 		spawn_cnt <= SPAWN_PERIOD_FRAMES;
 		btn_start_q <= 0;
+		hp <= HP_MAX;
 
 		for (i = 0; i < MAX_OBJ; i = i + 1) begin
 			obj_lane[i] <= 0;
@@ -308,6 +344,7 @@ always @(posedge clk) begin
 			state <= S_PLAY;
 			frame_cnt <= 0;
 			spawn_cnt <= SPAWN_PERIOD_FRAMES;
+			hp <= HP_MAX;
 
 			for (i = 0; i < MAX_OBJ; i = i + 1) begin
 				obj_lane[i] <= 0;
@@ -354,6 +391,14 @@ always @(posedge clk) begin
 					score <= next_score;
 					timer <= next_timer;
 					skill_charge <= next_charge;
+				end
+
+				// HP system: passive decay + mob-hit damage
+				hp <= next_hp;
+				if (next_hp == 8'd0) begin
+					state <= S_OVER;
+					if (new_high_score)
+						high_score_bcd <= score_bcd;
 				end
 
 				// Object falling and spawning

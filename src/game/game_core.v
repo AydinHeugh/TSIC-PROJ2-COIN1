@@ -65,6 +65,8 @@ wire [2:0] skill_charge;
 wire [7:0] skill_timer;
 wire skill_on;
 wire game_over;
+wire [7:0] hp;
+wire [11:0] hp_bcd;
 
 // Frame start signal
 assign frame_tick = bg_tvalid && bg_tready && bg_tuser[0];
@@ -106,7 +108,9 @@ game_ctrl #(
 	.skill_charge(skill_charge),
 	.skill_timer(skill_timer),
 	.skill_on(skill_on),
-	.game_over(game_over)
+	.game_over(game_over),
+	.hp(hp),
+	.hp_bcd(hp_bcd)
 );
 
 bg_layer #(
@@ -167,6 +171,8 @@ ui_layer #(
 	.skill_charge(skill_charge),
 	.skill_timer(skill_timer),
 	.game_over(game_over),
+	.hp(hp),
+	.hp_bcd(hp_bcd),
 	.btn_left(btn_left),
 	.btn_right(btn_right),
 

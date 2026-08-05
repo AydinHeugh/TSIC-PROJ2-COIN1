@@ -13,6 +13,8 @@ module ui_layer #(
 	input [11:0] high_score_bcd,
 	input [2:0] skill_charge,
 	input [7:0] skill_timer,
+	input [7:0] hp,
+	input [11:0] hp_bcd,
 	input game_over,
 	input btn_left,
 	input btn_right,
@@ -46,8 +48,13 @@ localparam CHARGE_Y = 474;
 localparam CHARGE_W = 36;
 localparam CHARGE_H = 6;
 localparam CHARGE_GAP = 4;
-localparam SKILL_TIME_X = 430;
-localparam SKILL_TIME_Y = 452;
+localparam HEART_X = 32;
+localparam HEART_Y = 472;   // bottom-left of the UI band, under the timer digits
+localparam HEART_W = 120;
+localparam HEART_H = 8;
+localparam HP_MAX = 99;   // must match game_ctrl's HP_MAX
+localparam HP_NUM_X = 32;    // directly above the health bar, in the space the
+localparam HP_NUM_Y = 448;   // old timer digits used to occupy
 localparam SMALL_DIGIT_W = 12;
 localparam SMALL_DIGIT_H = 24;
 localparam SMALL_DIGIT_GAP = 3;
@@ -62,7 +69,9 @@ localparam [23:0] SCORE_RGB      = 24'h20E0FF;
 localparam [23:0] HIGH_SCORE_RGB = 24'hE8E8E8;
 localparam [23:0] INDICATOR_RGB  = 24'h20FF40;
 localparam [23:0] CHARGE_RGB     = 24'hFFEA20;
-localparam [23:0] SKILL_TIME_RGB = 24'hFFEA20;
+localparam [23:0] HP_NUM_RGB     = 24'hE8E8E8;
+localparam [23:0] HEART_RGB      = 24'h3030FF;   // BGR order -- this is red on screen
+localparam [23:0] HEART_BG_RGB   = 24'h101040;   // BGR order -- dark red track
 
 reg [`SVO_XYBITS-1:0] hcursor, vcursor;
 reg [4:0] blink_cnt;
@@ -84,10 +93,8 @@ wire [3:0] high_score_d2 = high_score_bcd[11:8];
 wire [3:0] high_score_d1 = high_score_bcd[7:4];
 wire [3:0] high_score_d0 = high_score_bcd[3:0];
 
-wire skill_timer_ge_10 = skill_timer >= 10;
-wire [3:0] skill_timer_d1 = skill_timer_ge_10 ? 1 : 0;
-wire [3:0] skill_timer_d0 = skill_timer_ge_10 ? skill_timer - 10 : skill_timer[3:0];
-wire skill_small_on = SKILL_ENABLE && (skill_timer != 0);
+wire [3:0] hp_d1 = hp_bcd[7:4];
+wire [3:0] hp_d0 = hp_bcd[3:0];
 
 // For a big-digit field at base X, report which of the 3 columns the current
 // pixel hits: {hit(1), col(2), local_x(5)}.
@@ -109,7 +116,7 @@ function [7:0] big_col;
 	end
 endfunction
 
-// Same, for the 2-digit small (skill timer) field.
+// Same, for the 2-digit small (HP) field.
 function [7:0] small_col;
 	input [`SVO_XYBITS-1:0] px;
 	input [`SVO_XYBITS-1:0] base;
@@ -151,11 +158,36 @@ function charge_bar_pixel;
 	end
 endfunction
 
+// Filled-width health bar: lit red up to (hp / HP_MAX) of HEART_W.
+function heart_bar_pixel;
+	input [`SVO_XYBITS-1:0] x;
+	input [`SVO_XYBITS-1:0] y;
+	input [7:0] hp_val;
+
+	reg [`SVO_XYBITS-1:0] fill_w;
+	begin
+		fill_w = (HEART_W * hp_val) / HP_MAX;
+		heart_bar_pixel = (y >= HEART_Y && y < HEART_Y + HEART_H &&
+							x >= HEART_X && x < HEART_X + fill_w);
+	end
+endfunction
+
+// Full bar track (always visible, even at 0 hearts) so an empty bar reads as
+// "empty" rather than "missing".
+function heart_bar_track_pixel;
+	input [`SVO_XYBITS-1:0] x;
+	input [`SVO_XYBITS-1:0] y;
+	begin
+		heart_bar_track_pixel = (y >= HEART_Y && y < HEART_Y + HEART_H &&
+								  x >= HEART_X && x < HEART_X + HEART_W);
+	end
+endfunction
+
 // Combinational: for this pixel, decide which glyph cell it lands in, its BCD
 // value, colour field, and the 6x12 source coordinate (screen coords scaled
 // down by replication: big = >>2 for 24x48, small = >>1 for 12x24).
 reg        glyph_hit;
-reg [1:0]  field;        // 0=timer 1=score 2=high 3=skill(small)
+reg [1:0]  field;        // 0=timer 1=score 2=high 3=hp(small)
 reg [3:0]  digit;
 reg [2:0]  src_x;
 reg [3:0]  src_y;
@@ -174,23 +206,13 @@ always @(*) begin
 	ly_big    = 0;
 	ly_small  = 0;
 
-	tcol = big_col(pixel_x, TIMER_X);
 	scol = big_col(pixel_x, SCORE_X);
 	hcol = big_col(pixel_x, HIGH_SCORE_X);
-	kcol = small_col(pixel_x, SKILL_TIME_X);
+	kcol = small_col(pixel_x, HP_NUM_X);
 
 	if (pixel_y >= DIGIT_Y && pixel_y < DIGIT_Y + DIGIT_H) begin
 		ly_big = pixel_y - DIGIT_Y;
-		if (tcol[7]) begin
-			glyph_hit = 1'b1; field = 2'd0; lx_sel = tcol[4:0];
-			case (tcol[6:5])
-				2'd0: digit = timer_d2;
-				2'd1: digit = timer_d1;
-				default: digit = timer_d0;
-			endcase
-			src_x = lx_sel[4:2];
-			src_y = ly_big[5:2];
-		end else if (scol[7]) begin
+		if (scol[7]) begin
 			glyph_hit = 1'b1; field = 2'd1; lx_sel = scol[4:0];
 			case (scol[6:5])
 				2'd0: digit = score_d2;
@@ -211,17 +233,17 @@ always @(*) begin
 		end
 	end
 
-	// Small (skill timer) field is checked independently: its Y band overlaps
-	// the big-digit band but its X range is disjoint, so a pixel is in at most
+	// Small (HP) field is checked independently: its Y band overlaps the
+	// big-digit band but its X range is disjoint, so a pixel is in at most
 	// one glyph. Only reachable when the big field did not already claim it.
-	if (!glyph_hit && skill_small_on &&
-		pixel_y >= SKILL_TIME_Y && pixel_y < SKILL_TIME_Y + SMALL_DIGIT_H) begin
-		ly_small = pixel_y - SKILL_TIME_Y;
+	if (!glyph_hit &&
+		pixel_y >= HP_NUM_Y && pixel_y < HP_NUM_Y + SMALL_DIGIT_H) begin
+		ly_small = pixel_y - HP_NUM_Y;
 		if (kcol[7]) begin
 			glyph_hit = 1'b1; field = 2'd3; lx_sel = kcol[4:0];
 			case (kcol[6:5])
-				2'd0: digit = skill_timer_d1;
-				default: digit = skill_timer_d0;
+				2'd0: digit = hp_d1;
+				default: digit = hp_d0;
 			endcase
 			src_x = lx_sel[3:1];
 			src_y = ly_small[4:1];
@@ -247,6 +269,8 @@ rom #(
 wire score_on = !game_over || blink_on;
 wire in_ui = (pixel_y >= UI_TOP) || (pixel_y < UI_TOP_BAR_H);
 wire charge_pixel = SKILL_ENABLE && charge_bar_pixel(pixel_x, pixel_y, skill_charge);
+wire heart_pixel = heart_bar_pixel(pixel_x, pixel_y, hp);
+wire heart_track_pixel = heart_bar_track_pixel(pixel_x, pixel_y);
 wire left_indicator = btn_left && pixel_y >= UI_TOP + 8 && pixel_y < UI_TOP + 56 &&
 						pixel_x >= 4 && pixel_x < 20;
 wire right_indicator = btn_right && pixel_y >= UI_TOP + 8 && pixel_y < UI_TOP + 56 &&
@@ -260,7 +284,7 @@ reg [SVO_BITS_PER_PIXEL-1:0] bg_d;
 reg [0:0] tuser_d;
 reg tvalid_d;
 reg score_on_d;
-reg left_ind_d, right_ind_d, charge_d, in_ui_d;
+reg left_ind_d, right_ind_d, charge_d, heart_d, heart_track_d, in_ui_d;
 
 assign in_axis_tready  = out_axis_tready;
 assign out_axis_tvalid = tvalid_d;
@@ -274,8 +298,10 @@ assign out_axis_tdata =
 	(glyph_on && field_d == 2'd0)               ? TIMER_RGB :
 	(glyph_on && field_d == 2'd1 && score_on_d) ? SCORE_RGB :
 	(glyph_on && field_d == 2'd2)               ? HIGH_SCORE_RGB :
-	(glyph_on && field_d == 2'd3)               ? SKILL_TIME_RGB :
+	(glyph_on && field_d == 2'd3)               ? HP_NUM_RGB :
 	charge_d                                ? CHARGE_RGB :
+	heart_d                                 ? HEART_RGB :
+	heart_track_d                           ? HEART_BG_RGB :
 	in_ui_d                                 ? UI_BG_RGB :
 											  bg_d;
 
@@ -291,6 +317,8 @@ always @(posedge clk) begin
 		left_ind_d <= 0;
 		right_ind_d <= 0;
 		charge_d <= 0;
+		heart_d <= 0;
+		heart_track_d <= 0;
 		in_ui_d <= 0;
 	end else if (out_axis_tready) begin
 		tvalid_d <= in_axis_tvalid;
@@ -304,6 +332,8 @@ always @(posedge clk) begin
 			left_ind_d <= left_indicator;
 			right_ind_d <= right_indicator;
 			charge_d <= charge_pixel;
+			heart_d <= heart_pixel;
+			heart_track_d <= heart_track_pixel;
 			in_ui_d <= in_ui;
 		end
 	end
