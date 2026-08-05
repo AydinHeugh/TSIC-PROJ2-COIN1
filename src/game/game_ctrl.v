@@ -67,6 +67,7 @@ localparam [7:0] HP_MAX = 8'd99;
 localparam [7:0] HP_DECAY_PER_SEC = 8'd2;
 localparam [7:0] HP_DMG_MINUS3 = 8'd3;
 localparam [7:0] HP_DMG_MINUS5 = 8'd5;
+localparam [7:0] HP_HEAL_MEDKIT = 8'd10;
 
 localparam [9:0] SCREEN_W = 640;
 localparam [9:0] OBJ_GROUND_Y = `UI_TOP - `OBJ_H;
@@ -107,6 +108,11 @@ wire sec_tick = game_step && timer_tick;
 
 assign game_over = state == S_OVER;
 
+// Lightning ability trigger: hold left+right together at full charge.
+// skill_slot does its own rising-edge detection on this, same as any
+// other button input.
+wire both_pressed = btn_left && btn_right;
+
 skill_slot #(
 	.ENABLE(SKILL_ENABLE),
 	.DURATION(SKILL_DURATION),
@@ -116,7 +122,7 @@ skill_slot #(
 	.resetn(resetn),
 	.sec_tick(sec_tick),
 	.restart(btn_start_rise),
-	.btn_skill(1'b0), //skill button is closed
+	.btn_skill(both_pressed),
 	.skill_charge(skill_charge),
 	.skill_timer(skill_timer),
 	.skill_on(skill_on),
@@ -189,8 +195,30 @@ always @(*) begin
 end
 
 wire ground_valid = (obj_count != 0) && (obj_ypos[0] >= OBJ_GROUND_Y);
-assign remove_valid = hit_valid || ground_valid;
-wire [4:0] remove_idx = hit_valid ? hit_idx : 0;
+
+// Lightning ability: while active, sweep out one hazard object per frame
+// (reuses the same single-object-per-cycle removal path as a player hit or
+// an object reaching the ground). With MAX_OBJ this small, a screen full of
+// hazards clears within a handful of frames -- effectively instant.
+integer clear_i;
+reg clear_valid;
+reg [4:0] clear_idx;
+always @(*) begin
+	clear_valid = 0;
+	clear_idx = 0;
+	if (skill_on) begin
+		for (clear_i = 0; clear_i < MAX_OBJ; clear_i = clear_i + 1) begin
+			if (!clear_valid && clear_i < obj_count &&
+				(obj_type[clear_i] == TYPE_MINUS3 || obj_type[clear_i] == TYPE_MINUS5)) begin
+				clear_valid = 1;
+				clear_idx = clear_i[4:0];
+			end
+		end
+	end
+end
+
+assign remove_valid = hit_valid || ground_valid || clear_valid;
+wire [4:0] remove_idx = hit_valid ? hit_idx : (ground_valid ? 5'd0 : clear_idx);
 
 reg [9:0] next_score;
 reg [7:0] next_timer;
@@ -213,8 +241,8 @@ always @(*) begin
 			TYPE_COIN_3: score_delta = 3;
 			TYPE_COIN_5: score_delta = 5;
 			// TYPE_MINUS3 / TYPE_MINUS5 are hazards now -- they cost HP, not
-			// score. See the hp_delta block below.
-			TYPE_TIME: next_timer = timer + TIME_BONUS;
+			// score. TYPE_TIME is a medkit now -- it heals HP. Both handled
+			// in the hp_delta block below.
 			TYPE_CHARGE:
 				if (skill_charge < SKILL_CHARGE_MAX)
 					next_charge = skill_charge + 1;
@@ -233,9 +261,10 @@ always @(*) begin
 	end
 end
 
-// --- HP system: passive decay + mob-hit damage ---
+// --- HP system: passive decay + mob-hit damage + medkit heal ---
 wire mob_hit3 = hit_valid && obj_type[hit_idx] == TYPE_MINUS3;
 wire mob_hit5 = hit_valid && obj_type[hit_idx] == TYPE_MINUS5;
+wire medkit_hit = hit_valid && obj_type[hit_idx] == TYPE_TIME;
 
 reg signed [9:0] hp_delta;
 reg signed [10:0] hp_sum;
@@ -248,9 +277,13 @@ always @(*) begin
 		hp_delta = hp_delta - HP_DMG_MINUS3;
 	if (mob_hit5)
 		hp_delta = hp_delta - HP_DMG_MINUS5;
+	if (medkit_hit)
+		hp_delta = hp_delta + HP_HEAL_MEDKIT;
 
 	hp_sum = $signed({1'b0, hp}) + hp_delta;
-	next_hp = (hp_sum < 0) ? 8'd0 : hp_sum[7:0];
+	next_hp = (hp_sum < 0)        ? 8'd0 :
+			  (hp_sum > HP_MAX)   ? HP_MAX :
+									 hp_sum[7:0];
 end
 
 wire game_ending = sec_tick && next_timer <= 1;
